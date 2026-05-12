@@ -1,0 +1,134 @@
+const APP_NAME = 'suppliers';
+const MAX_ORPHANS_RETURNED = 50;
+function deriveOverallHealthy(checks) {
+    return checks.every((c) => c.passed || c.severity !== 'error');
+}
+function summarise(app, checks) {
+    const errors = checks.filter((c) => !c.passed && c.severity === 'error').length;
+    const warnings = checks.filter((c) => !c.passed && c.severity === 'warning').length;
+    if (errors === 0 && warnings === 0) {
+        return `${app}: all checks passed`;
+    }
+    return `${app}: ${errors} error(s), ${warnings} warning(s)`;
+}
+async function fetchValidSupplierCodes(operaDb) {
+    try {
+        const rows = (await operaDb.raw('SELECT RTRIM(pn_account) AS code FROM pname WITH (NOLOCK)'));
+        const list = Array.isArray(rows)
+            ? rows
+            : Array.isArray(rows?.rows)
+                ? rows.rows
+                : [];
+        const out = new Set();
+        for (const r of list) {
+            const code = (r?.code ?? '').toString().trim();
+            if (code)
+                out.add(code);
+        }
+        return out;
+    }
+    catch {
+        return new Set();
+    }
+}
+async function fetchLocalSupplierCodes(appDb) {
+    if (!appDb)
+        return { rows: [], source: 'none' };
+    try {
+        const rows = (await appDb('supplier_statements')
+            .whereNotNull('supplier_code')
+            .distinct('supplier_code')
+            .select('supplier_code'));
+        const cleaned = (rows ?? [])
+            .map((r) => ({ supplier_code: (r.supplier_code ?? '').trim() }))
+            .filter((r) => r.supplier_code);
+        if (cleaned.length > 0) {
+            return { rows: cleaned, source: 'statements' };
+        }
+    }
+    catch {
+        // table may not exist yet
+    }
+    try {
+        const rows = (await appDb('supplier_config')
+            .whereNotNull('supplier_code')
+            .distinct('supplier_code')
+            .select('supplier_code'));
+        const cleaned = (rows ?? [])
+            .map((r) => ({ supplier_code: (r.supplier_code ?? '').trim() }))
+            .filter((r) => r.supplier_code);
+        return { rows: cleaned, source: 'config' };
+    }
+    catch {
+        return { rows: [], source: 'none' };
+    }
+}
+export async function runSuppliersHealthCheck(opts) {
+    const checks = [];
+    const validCodes = await fetchValidSupplierCodes(opts.operaDb);
+    // ---- Supplier codes in local data ----
+    const local = await fetchLocalSupplierCodes(opts.appDb ?? null);
+    if (local.source === 'none' || local.rows.length === 0) {
+        checks.push({
+            name: 'Supplier statement history',
+            description: local.source === 'none'
+                ? 'Skipped — no local supplier tables provisioned'
+                : 'No supplier statement history yet — nothing to check',
+            passed: true,
+            severity: 'info',
+        });
+    }
+    else {
+        const orphans = [];
+        let orphanTotal = 0;
+        for (const row of local.rows) {
+            const code = row.supplier_code;
+            if (code && !validCodes.has(code)) {
+                orphanTotal += 1;
+                if (orphans.length < MAX_ORPHANS_RETURNED) {
+                    orphans.push({
+                        supplier_code: code,
+                        reason: `supplier '${code}' from local data not in Opera pname`,
+                    });
+                }
+            }
+        }
+        checks.push({
+            name: 'Supplier statement history',
+            description: 'Supplier codes referenced in local data must exist in Opera pname',
+            passed: orphanTotal === 0,
+            total_checked: local.rows.length,
+            orphan_count: orphanTotal,
+            orphans,
+            severity: 'warning',
+        });
+    }
+    // ---- Opera connection sanity ----
+    if (validCodes.size === 0) {
+        checks.push({
+            name: 'Opera connection',
+            description: 'Opera returned no supplier codes — connection or schema broken',
+            passed: false,
+            severity: 'error',
+        });
+    }
+    else {
+        checks.push({
+            name: 'Opera connection',
+            description: `Opera returned ${validCodes.size} suppliers`,
+            passed: true,
+            severity: 'info',
+        });
+    }
+    return {
+        app: APP_NAME,
+        healthy: deriveOverallHealthy(checks),
+        summary: summarise(APP_NAME, checks),
+        checks,
+        metadata: {
+            checked_at: new Date().toISOString(),
+            opera_supplier_count: validCodes.size,
+        },
+    };
+}
+//# sourceMappingURL=health-check.js.map
