@@ -1,19 +1,33 @@
 /**
  * suppliers — SAM plugin entry point.
  *
- * The Python suppliers app is incomplete. Per the user's direction,
- * suppliers is finished in TypeScript directly (rather than completing
- * Python first then porting). Foundation + supplier listing in place;
- * feature work continues.
+ * Dual export shape:
+ *   - `register({ app, useSamContext, useSamServices })` — SAM v1.6.3+
+ *     v2 plugin contract. Used by SAM's plugin loader when
+ *     `manifest.samContextVersion === 2`. The shim translates SAM's
+ *     per-request context into the v1 AppContext shape this plugin's
+ *     existing router code (src/router.ts) expects.
+ *   - `default factory(ctx)` — v1 contract, used by the standalone
+ *     host in `standalone/server.ts`. Standalone constructs its own
+ *     AppContext from local config and passes it directly.
  *
- * SAM loads plugins via `import()` and calls the default export with
- * an AppContext.
+ * Both paths converge on the existing `createRouter(ctx)` factory,
+ * which is untouched. See src/_shared/sam-v2-shim.ts for the v2
+ * translation mechanics (Proxy + AsyncLocalStorage).
  */
 import { createRouter } from './router.js';
 import type { AppContext, AppBackendFactory } from './app-context.js';
+import { createV2RegisterAdapter } from './_shared/sam-v2-shim.js';
 
+// ── v2 contract (SAM 1.6.3+) ─────────────────────────────────────────────
+export const register = createV2RegisterAdapter({
+  appId: 'suppliers',
+  createRouterV1: createRouter,
+});
+
+// ── v1 contract (kept for standalone host) ────────────────────────────────
 const factory: AppBackendFactory = (ctx: AppContext) => {
-  ctx.logger.info(`suppliers plugin loaded for tenant ${ctx.tenantId} (DEV)`);
+  ctx.logger.info(`suppliers plugin loaded for tenant ${ctx.tenantId}`);
   return createRouter(ctx);
 };
 

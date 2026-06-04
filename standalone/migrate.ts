@@ -1,10 +1,15 @@
 /**
  * Idempotent migration runner for the standalone host.
  *
- * Imports each .ts file in db/migrations/ in lexical order, calls
+ * Imports each .ts file in src/db/migrations/ in lexical order, calls
  * up(knex) if it hasn't been applied yet, and records the filename in
  * a _standalone_migrations table. Bypasses Knex's built-in tracker so
  * .ts migrations under ESM load cleanly via the tsx runtime.
+ *
+ * The migrations directory lives under src/db/ so the project's tsc
+ * build emits compiled JS into dist/db/migrations/ — which is where
+ * SAM's plugin loader looks for `.js` migration files when
+ * provisioning a per-app DB.
  */
 import type { Knex } from 'knex';
 import { readdir } from 'node:fs/promises';
@@ -12,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = resolve(__dirname, '..', 'db', 'migrations');
+const MIGRATIONS_DIR = resolve(__dirname, '..', 'src', 'db', 'migrations');
 const TABLE = '_standalone_migrations';
 
 export async function runMigrations(db: Knex): Promise<void> {

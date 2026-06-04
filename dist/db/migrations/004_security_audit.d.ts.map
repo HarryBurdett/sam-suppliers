@@ -1,0 +1,1 @@
+{"version":3,"file":"004_security_audit.d.ts","sourceRoot":"","sources":["../../../src/db/migrations/004_security_audit.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;;GAYG;AACH,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,MAAM,CAAC;AAEjC,wBAAsB,EAAE,CAAC,IAAI,EAAE,IAAI,GAAG,OAAO,CAAC,IAAI,CAAC,CAQlD;AAED,wBAAsB,IAAI,CAAC,IAAI,EAAE,IAAI,GAAG,OAAO,CAAC,IAAI,CAAC,CAQpD"}

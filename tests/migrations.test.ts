@@ -1,5 +1,5 @@
 /**
- * Migration smoke test — runs every migration in db/migrations against
+ * Migration smoke test — runs every migration in src/db/migrations against
  * an in-memory SQLite database to catch:
  *
  *  - Syntax errors that type-checking can't see
@@ -18,7 +18,7 @@ import knex, { type Knex } from 'knex';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
-const MIGRATIONS_DIR = path.resolve(__dirname, '../db/migrations');
+const MIGRATIONS_DIR = path.resolve(__dirname, '../src/db/migrations');
 
 async function makeDb(): Promise<Knex> {
   return knex({
@@ -45,7 +45,7 @@ describe('migrations smoke test', () => {
     }
   });
 
-  it('every migration file in db/migrations runs cleanly in order', async () => {
+  it('every migration file in src/db/migrations runs cleanly in order', async () => {
     db = await makeDb();
     const files = await listMigrations();
     expect(files.length).toBeGreaterThan(0);

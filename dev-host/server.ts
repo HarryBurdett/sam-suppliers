@@ -10,11 +10,12 @@ import express from 'express';
 import knex, { type Knex } from 'knex';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import type { AppContext, AppBackendFactory } from '../src/app-context.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
+const FRONTEND_DIST = resolve(repoRoot, 'frontend', 'dist');
 
 function makeInMemoryKnex(): Knex {
   return knex({
@@ -26,7 +27,7 @@ function makeInMemoryKnex(): Knex {
 }
 
 async function runMigrations(db: Knex): Promise<void> {
-  const dir = resolve(repoRoot, 'db/migrations');
+  const dir = resolve(repoRoot, 'src/db/migrations');
   const files = (await readdir(dir)).filter((f) => f.endsWith('.ts')).sort();
   for (const file of files) {
     const mod = (await import(resolve(dir, file))) as {
@@ -77,6 +78,15 @@ async function main() {
   const app = express();
   app.use(express.json({ limit: '10mb' }));
 
+  // SPA's hashed asset bundle (frontend/dist/assets/index-HASH.{js,css}).
+  app.use(
+    '/assets',
+    express.static(resolve(FRONTEND_DIST, 'assets'), {
+      etag: true,
+      lastModified: true,
+    }),
+  );
+
   app.use('/api/apps/suppliers', (req, _res, next) => {
     req.user = {
       userId: 'dev-user',
@@ -86,19 +96,47 @@ async function main() {
       tenantId: 'dev-tenant',
       permissions: ['opera:read', 'opera:write', 'sam:config:read'],
     };
-    const company = req.header('X-Opera-Company');
-    if (company) req.operaCompany = company;
+    const company = req.header('X-Opera-Company') ?? 'DEMO';
+    req.operaCompany = company;
     next();
   });
 
   app.use('/api/apps/suppliers', pluginRouter);
 
-  app.use(
-    '/api/apps/suppliers/static',
-    express.static(resolve(repoRoot, 'frontend/dist')),
-  );
-
-  app.use(express.static(resolve(__dirname, 'public')));
+  // SPA shell with __SAM_CONTEXT__ injection. Mirrors what SAM does in
+  // its iframe host — the SPA picks up the context at module-init.
+  app.get('/', async (_req, res) => {
+    let indexHtml: string;
+    try {
+      indexHtml = await readFile(resolve(FRONTEND_DIST, 'index.html'), 'utf8');
+    } catch (err) {
+      res
+        .status(500)
+        .type('text/plain')
+        .send(
+          `Failed to read frontend/dist/index.html — run \`npm run build\` first. (${(err as Error).message})`,
+        );
+      return;
+    }
+    const samContext = {
+      appId: 'suppliers',
+      user: {
+        userId: 'dev-user',
+        email: 'dev@example.com',
+        name: 'Dev User',
+        role: 'admin',
+        userType: 'tenant-admin',
+        tenantId: 'dev-tenant',
+        permissions: ['opera:read', 'opera:write', 'sam:config:read'],
+      },
+      token: 'dev-token',
+      currentCompany: { code: 'DEMO', name: 'Demo Company' },
+    };
+    const inject = `<script>window.__SAM_CONTEXT__ = ${JSON.stringify(samContext).replace(/</g, '\\u003c')};</script>`;
+    const patched = indexHtml.replace(/<head>/i, `<head>${inject}`);
+    res.setHeader('Cache-Control', 'no-store, must-revalidate');
+    res.type('html').send(patched);
+  });
 
   app.use(
     (
@@ -116,7 +154,7 @@ async function main() {
   app.listen(port, () => {
     console.log(`\n[dev-host] http://localhost:${port}`);
     console.log(`[dev-host] plugin API:  /api/apps/suppliers/*`);
-    console.log(`[dev-host] frontend:    /api/apps/suppliers/static/index.js`);
+    console.log(`[dev-host] SPA shell:   GET /`);
   });
 }
 
