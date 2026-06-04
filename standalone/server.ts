@@ -1,0 +1,345 @@
+/**
+ * Standalone host entry point.
+ *
+ * Multi-company:
+ *   - For each subdirectory of DATA_ROOT (auto-discovered, optionally
+ *     bootstrapped from LEGACY_DATA_ROOT), boot a dedicated plugin
+ *     instance from dist/index.js, backed by its own SQLite at
+ *     <DATA_ROOT>/<companyCode>/suppliers.sqlite.
+ *   - A dispatcher router at /api/apps/suppliers inspects the session
+ *     cookie to forward each request to the right per-company router.
+ *   - Login form picks the company (alongside the shared password) and
+ *     bakes companyCode into the signed session cookie.
+ *
+ * SAM contract is untouched — `standalone/` is sibling to the SAM
+ * plugin contract; SAM-plugged mode runs dist/index.js with SAM's own
+ * AppContext and never imports this module.
+ */
+import express, {
+  type Express,
+  type Router,
+  type Request,
+  type Response,
+  type NextFunction,
+} from 'express';
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+} from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { loadConfig, type StandaloneConfig } from './config.js';
+import { loginRouter, requireAuth } from './auth.js';
+import { selectAdapter, type OperaAdapter } from './opera-adapter.js';
+import {
+  discoverCompanies,
+  loadCompany,
+  loadOperaConfig,
+  type CompanyInstance,
+} from './company-registry.js';
+import type { AppBackendFactory, AppLogger } from '../src/app-context.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(__dirname, '..');
+const DIST_ENTRY = resolve(repoRoot, 'dist', 'index.js');
+const FRONTEND_DIST = resolve(repoRoot, 'frontend', 'dist');
+const PUBLIC_DIR = resolve(__dirname, 'public');
+const APP_ROUTE = '/api/apps/suppliers';
+
+const consoleLogger: AppLogger = {
+  info: (msg, ...args) => console.log(`[info] ${msg}`, ...args),
+  warn: (msg, ...args) => console.warn(`[warn] ${msg}`, ...args),
+  error: (msg, ...args) => console.error(`[error] ${msg}`, ...args),
+  debug: (msg, ...args) => console.log(`[debug] ${msg}`, ...args),
+};
+
+export interface BuildAppOptions {
+  dataDir?: string;
+}
+
+export interface BuiltApp {
+  app: Express;
+  config: StandaloneConfig;
+  companies: Map<string, CompanyInstance>;
+  operaAdapter: OperaAdapter;
+}
+
+export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
+  if (!existsSync(DIST_ENTRY)) {
+    throw new Error(`${DIST_ENTRY} not found — run \`npm run build\` first.`);
+  }
+
+  const config = loadConfig({ dataDir: opts.dataDir });
+  const pluginMod = (await import(DIST_ENTRY)) as { default: AppBackendFactory };
+
+  const codes = discoverCompanies(config.dataRoot, config.legacyDataRoot);
+  if (codes.length === 0) {
+    throw new Error(
+      `No companies found under ${config.dataRoot}. Create a subdirectory ` +
+        `per company (e.g., ${config.dataRoot}/intsys/) or set LEGACY_DATA_ROOT ` +
+        `to bootstrap from an existing data tree.`,
+    );
+  }
+
+  const operaCompanies = new Map<
+    string,
+    { database: string; operaVersion?: string }
+  >();
+  for (const code of codes) {
+    const cfg = loadOperaConfig(
+      config.dataRoot,
+      config.legacyCompaniesDir,
+      code,
+      consoleLogger,
+    );
+    if (cfg) {
+      operaCompanies.set(code, {
+        database: cfg.database,
+        operaVersion: cfg.operaVersion,
+      });
+    }
+  }
+
+  const operaAdapter = await selectAdapter({
+    name: config.operaAdapter,
+    logger: consoleLogger,
+    mssql: config.mssql
+      ? { ...config.mssql, companies: operaCompanies }
+      : undefined,
+    opera3: config.opera3
+      ? { ...config.opera3, companies: operaCompanies }
+      : undefined,
+  });
+
+  const companies = new Map<string, CompanyInstance>();
+  try {
+    for (const code of codes) {
+      consoleLogger.info(`loading company "${code}"`);
+      const instance = await loadCompany(code, {
+        dataRoot: config.dataRoot,
+        legacyDataRoot: config.legacyDataRoot,
+        operaAdapter,
+        logger: consoleLogger,
+        factory: pluginMod.default,
+      });
+      companies.set(code, instance);
+    }
+  } catch (err) {
+    for (const c of companies.values()) {
+      await c.samDb.destroy().catch(() => {});
+      await c.appDb.destroy().catch(() => {});
+    }
+    if (operaAdapter.destroy) await operaAdapter.destroy().catch(() => {});
+    throw err;
+  }
+
+  const app = express();
+  app.set('trust proxy', config.trustProxy);
+  app.use(express.json({ limit: '10mb' }));
+
+  app.get('/healthz', (_req, res) => {
+    res.json({
+      ok: true,
+      companies: Array.from(companies.keys()),
+      adapter: config.operaAdapter,
+    });
+  });
+
+  app.get('/login.html', (_req, res) => {
+    res.sendFile(resolve(PUBLIC_DIR, 'login.html'));
+  });
+
+  app.use('/auth', loginRouter(config, () => Array.from(companies.keys())));
+
+  app.use(requireAuth(config));
+
+  app.get('/auth/me', (req: Request, res: Response) => {
+    res.json({
+      user: req.user,
+      company: req.standaloneCompany ?? null,
+    });
+  });
+
+  app.get('/auth/system-info', (req: Request, res: Response) => {
+    const code = req.standaloneCompany;
+    const company = code ? companies.get(code) : undefined;
+    let operaDatabase: string | null = null;
+    let operaVersion: string | null = null;
+    if (code) {
+      const operaFile = join(config.dataRoot, code, 'opera.json');
+      if (existsSync(operaFile)) {
+        try {
+          const parsed = JSON.parse(readFileSync(operaFile, 'utf8')) as {
+            database?: string;
+            operaVersion?: string;
+          };
+          operaDatabase = parsed.database ?? null;
+          operaVersion = parsed.operaVersion ?? null;
+        } catch {
+          // surface as null
+        }
+      }
+    }
+    res.json({
+      active_company: {
+        code,
+        opera_database: operaDatabase,
+        opera_version: operaVersion,
+      },
+      adapter: config.operaAdapter,
+      opera_sql: config.mssql
+        ? {
+            host: config.mssql.host,
+            port: config.mssql.port,
+            username: config.mssql.user,
+            password_configured: Boolean(config.mssql.password),
+            encrypt: config.mssql.encrypt,
+            trust_server_certificate: config.mssql.trustServerCertificate,
+          }
+        : null,
+      opera3: config.opera3
+        ? {
+            agent_url: config.opera3.agentUrl,
+            agent_key_configured: Boolean(config.opera3.agentKey),
+            data_path: config.opera3.dataPath,
+          }
+        : null,
+      data_root: config.dataRoot,
+      legacy_data_root: config.legacyDataRoot,
+      company_loaded: Boolean(company),
+    });
+  });
+
+  app.put('/auth/system-info', async (req: Request, res: Response) => {
+    const code = req.standaloneCompany;
+    if (!code) {
+      res.status(400).json({ error: 'no company in session' });
+      return;
+    }
+    const body = (req.body ?? {}) as {
+      opera_database?: unknown;
+      opera_version?: unknown;
+    };
+    const database =
+      typeof body.opera_database === 'string' ? body.opera_database.trim() : '';
+    const operaVersion =
+      typeof body.opera_version === 'string' ? body.opera_version.trim() : '';
+    if (database.length === 0) {
+      res.status(400).json({ error: 'opera_database is required' });
+      return;
+    }
+    if (operaVersion.length > 0 && !['SE', '3'].includes(operaVersion)) {
+      res.status(400).json({ error: 'opera_version must be "SE" or "3"' });
+      return;
+    }
+
+    const dir = join(config.dataRoot, code);
+    mkdirSync(dir, { recursive: true });
+    const operaFile = join(dir, 'opera.json');
+    const payload: { database: string; operaVersion?: string } = { database };
+    if (operaVersion.length > 0) payload.operaVersion = operaVersion;
+    writeFileSync(operaFile, JSON.stringify(payload, null, 2) + '\n');
+
+    if (operaAdapter.invalidateCompany) {
+      await operaAdapter.invalidateCompany(code, payload);
+    }
+    consoleLogger.info(
+      `[${code}] opera.json updated: database=${payload.database} operaVersion=${payload.operaVersion ?? '(default SE)'}`,
+    );
+    res.json({
+      ok: true,
+      opera_database: payload.database,
+      opera_version: payload.operaVersion ?? null,
+    });
+  });
+
+  app.use(`${APP_ROUTE}/static`, express.static(FRONTEND_DIST));
+  app.use(APP_ROUTE, makeDispatcher(companies));
+
+  app.use(express.static(PUBLIC_DIR));
+
+  app.use(
+    (
+      err: Error,
+      _req: Request,
+      res: Response,
+      _next: NextFunction,
+    ) => {
+      consoleLogger.error('unhandled:', err);
+      res.status(500).json({ error: err.message });
+    },
+  );
+
+  return { app, config, companies, operaAdapter };
+}
+
+function makeDispatcher(companies: Map<string, CompanyInstance>): Router {
+  const dispatch = express.Router();
+  dispatch.use((req: Request, res: Response, next: NextFunction) => {
+    const code = req.standaloneCompany;
+    if (!code) {
+      res.status(400).json({ error: 'no company in session' });
+      return;
+    }
+    const instance = companies.get(code);
+    if (!instance) {
+      res.status(404).json({ error: `unknown company: ${code}` });
+      return;
+    }
+    instance.router(req, res, next);
+  });
+  return dispatch;
+}
+
+async function main(): Promise<void> {
+  const { app, config, companies, operaAdapter } = await buildApp();
+  const server = app.listen(config.port, () => {
+    console.log(`\n[standalone] listening on http://localhost:${config.port}`);
+    console.log(`[standalone] data root:  ${config.dataRoot}`);
+    if (config.legacyDataRoot) {
+      console.log(`[standalone] legacy root: ${config.legacyDataRoot}`);
+    }
+    if (config.legacyCompaniesDir) {
+      console.log(`[standalone] legacy companies: ${config.legacyCompaniesDir}`);
+    }
+    console.log(`[standalone] companies:  ${Array.from(companies.keys()).join(', ')}`);
+    console.log(`[standalone] adapter:    ${config.operaAdapter}`);
+    if (config.mssql) {
+      console.log(
+        `[standalone] mssql:      ${config.mssql.user}@${config.mssql.host}:${config.mssql.port}`,
+      );
+    }
+  });
+
+  let shuttingDown = false;
+  async function shutdown(signal: string): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n[standalone] ${signal} received — shutting down`);
+    server.close((err) => {
+      if (err) console.error('[standalone] http close error:', err);
+    });
+    for (const c of companies.values()) {
+      await c.samDb.destroy().catch(() => {});
+      await c.appDb.destroy().catch(() => {});
+    }
+    if (operaAdapter.destroy) {
+      await operaAdapter.destroy().catch(() => {});
+    }
+    process.exit(0);
+  }
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+}
+
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error('[standalone] failed to start:', err);
+    process.exit(1);
+  });
+}

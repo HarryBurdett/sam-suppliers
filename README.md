@@ -73,3 +73,33 @@ cd frontend
 npm install
 npm run build
 ```
+
+## Running locally
+
+Two harnesses, sibling to the SAM plugin contract:
+
+### Dev host — `npm run dev`
+
+In-memory SQLite for `db.app`, no auth, no Opera. Boots the
+compiled plugin against an empty DB and serves the frontend
+bundle at `http://localhost:3000`. Opera-backed endpoints return
+503. Useful for frontend bring-up.
+
+### Standalone — `npm start`
+
+Production-style multi-company runner. Reads each subdirectory
+of `DATA_ROOT` as a company, runs migrations into a per-company
+SQLite, and dispatches `/api/apps/suppliers/*` to the right
+plugin instance based on the signed session cookie. Required:
+
+```sh
+LOGIN_PASSWORD=...   # shared login password
+DATA_ROOT=./data     # default; create <DATA_ROOT>/<code>/ per company
+```
+
+Opera SE (mssql) via `OPERA_ADAPTER=mssql` with
+`OPERA_SQL_HOST/USER/PASSWORD/PORT`. Opera 3 (HTTP agent
+scaffold) via `OPERA_ADAPTER=opera3` with `OPERA3_AGENT_URL/KEY`.
+Mixed deployments use `OPERA_ADAPTER=composite`. Per-company
+Opera database mappings live in `<DATA_ROOT>/<code>/opera.json`
+(`{ "database": "Opera3SECompany00X", "operaVersion": "SE" }`).

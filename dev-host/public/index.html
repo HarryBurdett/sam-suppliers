@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Suppliers — dev host</title>
+    <link rel="stylesheet" href="/api/apps/suppliers/static/style.css" />
+    <style>
+      html, body, #app { height: 100%; margin: 0; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      #dev-banner {
+        background: #fef3c7;
+        border-bottom: 1px solid #f59e0b;
+        color: #78350f;
+        font-size: 12px;
+        padding: 6px 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="dev-banner">
+      <strong>dev host:</strong> in-memory SQLite for db.app; no Opera DB; Opera-backed endpoints will fail
+    </div>
+    <div id="app"></div>
+
+    <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+    <script>
+      window.process = window.process || { env: { NODE_ENV: 'production' } };
+      window.__SAM_SHARED__ = {
+        react: window.React,
+        reactDom: window.ReactDOM,
+      };
+    </script>
+
+    <script src="/api/apps/suppliers/static/index.js"></script>
+
+    <script>
+      (function () {
+        const entry = window.__SAM_APPS__ && window.__SAM_APPS__['suppliers'];
+        if (!entry) {
+          document.getElementById('app').innerText =
+            'Failed to load plugin bundle: window.__SAM_APPS__.suppliers missing.';
+          return;
+        }
+
+        const BASE = '/api/apps/suppliers';
+
+        async function samFetch(path, options) {
+          const url = path.startsWith('/') ? BASE + path : BASE + '/' + path;
+          const init = options || {};
+          const headers = new Headers(init.headers || {});
+          if (!headers.has('X-Opera-Company')) headers.set('X-Opera-Company', 'DEMO');
+          const res = await fetch(url, { ...init, headers });
+          const text = await res.text();
+          let parsed = null;
+          if (text) {
+            try { parsed = JSON.parse(text); } catch { parsed = text; }
+          }
+          if (!res.ok) {
+            const msg =
+              (parsed && typeof parsed === 'object' && parsed.error) ||
+              (typeof parsed === 'string' && parsed) ||
+              ('HTTP ' + res.status);
+            throw new Error(msg);
+          }
+          return parsed;
+        }
+
+        const context = {
+          appId: 'suppliers',
+          user: {
+            userId: 'dev-user',
+            email: 'dev@example.com',
+            name: 'Dev User',
+            role: 'admin',
+          },
+          token: 'dev-token',
+          currentCompany: { code: 'DEMO', name: 'Demo Company' },
+          api: { baseUrl: BASE, fetch: samFetch },
+          events: new EventTarget(),
+        };
+
+        const React = window.React;
+        const ReactDOM = window.ReactDOM;
+        const root = ReactDOM.createRoot(document.getElementById('app'));
+        root.render(React.createElement(entry.component, { context: context }));
+      })();
+    </script>
+  </body>
+</html>

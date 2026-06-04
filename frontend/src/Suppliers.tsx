@@ -18,9 +18,15 @@ import { setSamContext } from './api-shim';
 import SupplierAccount from './SupplierAccount';
 import SupplierDashboard from './SupplierDashboard';
 import SupplierReconciliations from './SupplierReconciliations';
+import SupplierSettings from './SupplierSettings';
 import SupplierStatementQueue from './SupplierStatementQueue';
 
-type Tab = 'dashboard' | 'queue' | 'reconciliations' | 'account';
+type Tab =
+  | 'dashboard'
+  | 'queue'
+  | 'reconciliations'
+  | 'account'
+  | 'settings';
 
 export default function Suppliers({
   context,
@@ -47,33 +53,42 @@ export default function Suppliers({
     <QueryClientProvider client={queryClient}>
       <div className="suppliers-app space-y-4">
         <nav className="flex gap-2 border-b border-gray-200 px-4">
-          {(['dashboard', 'queue', 'reconciliations', 'account'] as const).map(
-            (t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={
-                  tab === t
-                    ? 'border-b-2 border-blue-600 px-4 py-2 text-sm font-medium text-blue-600'
-                    : 'px-4 py-2 text-sm text-gray-500 hover:text-gray-700'
-                }
-              >
-                {t === 'dashboard'
-                  ? 'Dashboard'
-                  : t === 'queue'
-                    ? 'Queue'
-                    : t === 'reconciliations'
-                      ? 'Reconciliations'
-                      : 'Account'}
-              </button>
-            ),
-          )}
+          {(
+            [
+              'dashboard',
+              'queue',
+              'reconciliations',
+              'account',
+              'settings',
+            ] as const
+          ).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={
+                tab === t
+                  ? 'border-b-2 border-blue-600 px-4 py-2 text-sm font-medium text-blue-600'
+                  : 'px-4 py-2 text-sm text-gray-500 hover:text-gray-700'
+              }
+            >
+              {t === 'dashboard'
+                ? 'Dashboard'
+                : t === 'queue'
+                  ? 'Queue'
+                  : t === 'reconciliations'
+                    ? 'Reconciliations'
+                    : t === 'account'
+                      ? 'Account'
+                      : 'Settings'}
+            </button>
+          ))}
         </nav>
 
         {tab === 'dashboard' && <SupplierDashboard />}
         {tab === 'queue' && <SupplierStatementQueue />}
         {tab === 'reconciliations' && <SupplierReconciliations />}
         {tab === 'account' && <SupplierAccount />}
+        {tab === 'settings' && <SupplierSettings />}
       </div>
     </QueryClientProvider>
   );

@@ -60,6 +60,88 @@ export const SUPPLIER_SETTINGS_DEFAULTS = {
         value: 'true',
         description: 'When true, every query email needs operator approval before sending.',
     },
+    // ---------- Ported from legacy supplier_automation_config seed ----------
+    // (sql_rag/supplier_statement_db.py:376-442). Keys the legacy
+    // SupplierSettings page exposes that the initial TS port did not yet
+    // include — adding them so the operator sees the full surface in the
+    // settings UI.
+    next_payment_run_date: {
+        value: '',
+        description: 'Next scheduled payment run date (YYYY-MM-DD). Included in automated responses to suppliers.',
+    },
+    require_approval_above: {
+        value: '1000',
+        description: 'Require manual approval for responses whose variance exceeds this amount.',
+    },
+    test_mode_enabled: {
+        value: 'false',
+        description: 'When true, all outbound supplier emails are redirected to the test address below.',
+    },
+    test_mode_email: {
+        value: '',
+        description: 'All supplier emails are sent here instead of the real contact when test mode is on.',
+    },
+    response_cc_email: {
+        value: '',
+        description: 'CC email address copied on every supplier response (for audit).',
+    },
+    auto_process: {
+        value: 'true',
+        description: 'Automatically reconcile statements when they are received.',
+    },
+    auto_create_supplier_from_email: {
+        value: 'false',
+        description: 'Automatically create a supplier contact record when a new sender emails a statement.',
+    },
+    require_sender_approval: {
+        value: 'true',
+        description: 'New sender email addresses require operator approval before statements are processed.',
+    },
+    default_statement_format: {
+        value: 'auto',
+        description: 'Expected format for incoming statements (pdf, csv, or auto-detect).',
+    },
+    // ---------- Email templates ----------
+    email_template_subject_agreed: {
+        value: 'Statement Confirmed — {supplier_name} — {statement_date}',
+        description: 'Subject line for outgoing emails when all items match.',
+    },
+    email_template_subject_query: {
+        value: 'Statement Response — {supplier_name} — {statement_date}',
+        description: 'Subject line for outgoing emails when items need attention.',
+    },
+    email_template_agreed: {
+        value: `<p>Dear {contact_name},</p>
+<p>Thank you for your statement dated {statement_date}.</p>
+<p>We confirm the balance of {their_balance} is agreed.</p>
+{payment_schedule}
+<p>Regards,<br>{company_sign_off}</p>`,
+        description: 'Email body template when balances agree. Supports merge fields ({contact_name}, {supplier_name}, {statement_date}, {their_balance}, {payment_schedule}, {company_sign_off}).',
+    },
+    email_template_query: {
+        value: `<p>Dear {contact_name},</p>
+<p>Thank you for your statement dated {statement_date}.</p>
+<table style="margin:12px 0;font-size:13px;">
+<tr><td style="padding:4px 16px 4px 0;color:#666;">Balance per your statement:</td><td style="font-weight:bold;">{their_balance}</td></tr>
+<tr><td style="padding:4px 16px 4px 0;color:#666;">Balance per our records:</td><td style="font-weight:bold;">{our_balance}</td></tr>
+<tr><td style="padding:4px 16px 4px 0;color:#666;">Difference:</td><td style="font-weight:bold;">{difference}</td></tr>
+</table>
+<p>{agreed_count} item(s) agreed. The following {query_count} item(s) require your attention:</p>
+{query_table}
+<p>Please provide further details on the items listed above.</p>
+{payment_table}
+{payment_schedule}
+<p>Regards,<br>{company_sign_off}</p>`,
+        description: 'Email body template when there are queries. Supports the same merge fields plus {query_count} and {query_table} (auto-inserted list).',
+    },
+    response_sign_off: {
+        value: 'Regards,<br>Accounts Department',
+        description: 'Email sign-off appended as {company_sign_off}. HTML allowed.',
+    },
+    response_company_name: {
+        value: '',
+        description: 'Company name shown below the sign-off (leave blank to hide).',
+    },
 };
 /**
  * Read all known supplier-automation settings, falling back to the
