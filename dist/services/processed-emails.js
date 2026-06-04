@@ -33,10 +33,39 @@ export async function recordProcessedEmail(appDb, input) {
         return { success: false, error: 'message_id is required' };
     }
     try {
-        const existing = (await appDb('processed_emails')
-            .where({ message_id: messageId })
-            .first());
-        if (existing) {
+        // Race-safe insert: use `onConflict.ignore()` so concurrent calls
+        // for the same message_id can't both win the existence check and
+        // then collide on the unique-constraint insert. Knex returns the
+        // inserted rows on success and an empty array on conflict — we
+        // distinguish "we inserted it" vs "someone else got there first"
+        // from the result rather than from a prior SELECT.
+        //
+        // Audit reference:
+        // docs/superpowers/specs/2026-06-04-allocation-integrity-audit.md
+        // (WEAK: recordProcessedEmail check-then-insert race).
+        const inserted = (await appDb('processed_emails')
+            .insert({
+            message_id: messageId,
+            supplier_code: (input.supplier_code ?? '').slice(0, 32),
+            subject: (input.subject ?? '').slice(0, 500),
+        })
+            .onConflict('message_id')
+            .ignore()
+            .returning('id'));
+        if (inserted.length === 0) {
+            // Conflict path: the row already existed. Look it up and return
+            // duplicate:true so the caller's idempotency semantics hold.
+            const existing = (await appDb('processed_emails')
+                .where({ message_id: messageId })
+                .first());
+            if (!existing) {
+                // Vanishingly rare — would mean the row was deleted between
+                // the conflict and the lookup. Treat as a non-fatal error.
+                return {
+                    success: false,
+                    error: 'processed_emails row vanished after conflict',
+                };
+            }
             return {
                 success: true,
                 duplicate: true,
@@ -49,18 +78,10 @@ export async function recordProcessedEmail(appDb, input) {
                 },
             };
         }
-        const inserted = await appDb('processed_emails')
-            .insert({
-            message_id: messageId,
-            supplier_code: (input.supplier_code ?? '').slice(0, 32),
-            subject: (input.subject ?? '').slice(0, 500),
-        })
-            .returning('id');
-        const id = Array.isArray(inserted) && inserted.length > 0
-            ? typeof inserted[0] === 'object'
-                ? inserted[0].id
-                : Number(inserted[0])
-            : 0;
+        const first = inserted[0];
+        const id = typeof first === 'object' && first !== null
+            ? first.id
+            : Number(first ?? 0);
         return {
             success: true,
             duplicate: false,

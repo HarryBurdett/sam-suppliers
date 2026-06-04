@@ -69,19 +69,34 @@ function makeAppDb(state: MockState): any {
         }
         return Promise.resolve(cb(rows.slice(0, limitN)));
       },
-      insert: (row: Partial<Row>) => ({
-        returning: (_: string) => {
+      insert: (row: Partial<Row>) => {
+        const performInsert = (skipOnConflict: boolean) => {
+          const messageId = String(row.message_id ?? '');
+          if (
+            skipOnConflict &&
+            state.rows.some((r) => r.message_id === messageId)
+          ) {
+            return [];
+          }
           const id = state.nextId++;
           state.rows.push({
             id,
-            message_id: String(row.message_id ?? ''),
+            message_id: messageId,
             supplier_code: (row.supplier_code as string) ?? null,
             subject: (row.subject as string) ?? null,
             processed_at: new Date().toISOString(),
           });
-          return Promise.resolve([{ id }]);
-        },
-      }),
+          return [{ id }];
+        };
+        return {
+          returning: (_: string) => Promise.resolve(performInsert(false)),
+          onConflict: (_col: string) => ({
+            ignore: () => ({
+              returning: (__: string) => Promise.resolve(performInsert(true)),
+            }),
+          }),
+        };
+      },
     };
     return builder;
   };
