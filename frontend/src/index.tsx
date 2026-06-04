@@ -50,10 +50,13 @@ function buildFallbackApi(): SamApiClient {
         } catch {
           // keep as text
         }
-        const msg =
-          (parsed && typeof parsed === 'object' && (parsed as { error?: string }).error) ||
-          (typeof parsed === 'string' && parsed) ||
-          `HTTP ${res.status}`;
+        let msg: string = `HTTP ${res.status}`;
+        if (parsed && typeof parsed === 'object') {
+          const err = (parsed as { error?: unknown }).error;
+          if (typeof err === 'string' && err) msg = err;
+        } else if (typeof parsed === 'string' && parsed) {
+          msg = parsed;
+        }
         throw new Error(msg);
       }
       const ct = res.headers.get('content-type') ?? '';

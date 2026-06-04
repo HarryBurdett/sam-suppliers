@@ -42,6 +42,18 @@ export interface StandaloneConfig {
   operaAdapter: string;
   mssql: MssqlEnv | null;
   opera3: Opera3Env | null;
+  /**
+   * Anthropic API key for the standalone `ctx.llm` adapter. When unset,
+   * ctx.llm stays null and the suppliers plugin's extraction / preview
+   * endpoints return 503 (existing graceful-degradation path).
+   */
+  anthropicApiKey: string | null;
+  /**
+   * Optional model override. When set, every LLM call uses this model
+   * regardless of what the plugin asks for. Useful for forcing all
+   * traffic to a single model for cost/latency baselines.
+   */
+  anthropicModel: string | null;
   /** Internal dir for .session-secret etc. (separate from per-company data). */
   dataDir: string;
   /**
@@ -119,6 +131,15 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
       ? process.env.TRUST_PROXY
       : 'loopback, linklocal, uniquelocal';
 
+  const anthropicApiKey =
+    process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.length > 0
+      ? process.env.ANTHROPIC_API_KEY
+      : null;
+  const anthropicModel =
+    process.env.ANTHROPIC_MODEL && process.env.ANTHROPIC_MODEL.length > 0
+      ? process.env.ANTHROPIC_MODEL
+      : null;
+
   return {
     port,
     dataRoot,
@@ -129,6 +150,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
     operaAdapter,
     mssql,
     opera3,
+    anthropicApiKey,
+    anthropicModel,
     dataDir,
     trustProxy,
   };

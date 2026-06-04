@@ -126,6 +126,11 @@ const apiClient = {
     ),
   supplierStatementHistory: (days = 90) =>
     call<any>('GET', '/api/supplier-statements/history', undefined, { days }),
+  supplierCommunications: (supplierCode?: string, days = 90) =>
+    call<any>('GET', '/api/supplier-communications', undefined, {
+      supplier_code: supplierCode,
+      days,
+    }),
 };
 
 // Loose type used by SupplierReconciliations and elsewhere — the
@@ -133,6 +138,14 @@ const apiClient = {
 export interface SupplierStatementQueueResponse {
   statements?: any[];
   count?: number;
+  [key: string]: any;
+}
+
+// Loose type used by SupplierCommunications. Same rationale as above.
+export interface SupplierCommunicationsResponse {
+  success?: boolean;
+  communications?: any[];
+  error?: string;
   [key: string]: any;
 }
 

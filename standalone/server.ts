@@ -39,6 +39,10 @@ import {
   loadOperaConfig,
   type CompanyInstance,
 } from './company-registry.js';
+import {
+  buildAnthropicLlm,
+  type LlmService,
+} from './anthropic-llm-adapter.js';
 import type { AppBackendFactory, AppLogger } from '../src/app-context.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -113,6 +117,22 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       : undefined,
   });
 
+  let llm: LlmService | null = null;
+  if (config.anthropicApiKey) {
+    llm = buildAnthropicLlm({
+      apiKey: config.anthropicApiKey,
+      modelOverride: config.anthropicModel ?? undefined,
+      logger: consoleLogger,
+    });
+    consoleLogger.info(
+      `[llm] anthropic adapter wired${config.anthropicModel ? ` (model override: ${config.anthropicModel})` : ''}`,
+    );
+  } else {
+    consoleLogger.info(
+      '[llm] ANTHROPIC_API_KEY not set — ctx.llm unavailable; extraction / preview endpoints will 503',
+    );
+  }
+
   const companies = new Map<string, CompanyInstance>();
   try {
     for (const code of codes) {
@@ -123,6 +143,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
         operaAdapter,
         logger: consoleLogger,
         factory: pluginMod.default,
+        llm,
       });
       companies.set(code, instance);
     }

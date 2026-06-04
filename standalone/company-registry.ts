@@ -22,10 +22,12 @@ import { join, resolve } from 'node:path';
 import type { Router } from 'express';
 import { runMigrations } from './migrate.js';
 import type { OperaAdapter } from './opera-adapter.js';
+import type { LlmService } from './anthropic-llm-adapter.js';
 import type {
   AppContext,
   AppBackendFactory,
   AppLogger,
+  SamLlmService,
 } from '../src/app-context.js';
 
 export interface OperaCompanyConfig {
@@ -49,6 +51,12 @@ export interface LoadOptions {
   operaAdapter: OperaAdapter;
   logger: AppLogger;
   factory: AppBackendFactory;
+  /**
+   * Optional LLM service shared across all companies. When null, ctx.llm
+   * is unset and the plugin's extraction / preview endpoints surface a
+   * "ctx.llm not configured" error.
+   */
+  llm?: LlmService | null;
 }
 
 /**
@@ -199,6 +207,9 @@ export async function loadCompany(
       },
       logger: opts.logger,
     };
+    if (opts.llm) {
+      ctx.llm = opts.llm as SamLlmService;
+    }
 
     const router = await opts.factory(ctx);
     return { code, ctx, router, appDb, samDb };
