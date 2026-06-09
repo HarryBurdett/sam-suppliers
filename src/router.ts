@@ -2292,6 +2292,56 @@ export function createRouter(ctx: AppContext): Router {
     },
   );
 
+  // Inline PDF/CSV viewer. Faithful port of bank-rec's /api/file/view
+  // (commit 3da79932) for SAM mode, where the FE's "View" button on a
+  // supplier-statement PDF would otherwise 404 because /api/file/view
+  // only existed in the standalone host. Externally mounted at
+  // /api/apps/suppliers/file/view via SAM's internalApiPrefix routing.
+  // Streams the file inline so the browser previews it in a new tab.
+  //
+  // SECURITY: only serves files inside this app's data directory
+  // (SAM_DATA_DIR/apps/suppliers) — refuses path traversal / absolute
+  // paths pointing elsewhere. Auth is enforced upstream by SAM's session
+  // middleware (the new tab carries the same-origin sam_session cookie).
+  router.get('/api/file/view', async (req, res) => {
+    const rawPath = String(req.query['path'] ?? '');
+    if (!rawPath) {
+      res.status(400).json({ error: 'path query parameter required' });
+      return;
+    }
+    const { resolve: pathResolve } = await import('node:path');
+    const { existsSync: viewExists } = await import('node:fs');
+    const { readFile: viewReadFile } = await import('node:fs/promises');
+    const dataDir = process.env['SAM_DATA_DIR'] ?? '/data/sam';
+    const appRoot = pathResolve(`${dataDir}/apps/suppliers`);
+    const resolved = pathResolve(rawPath);
+    if (resolved !== appRoot && !resolved.startsWith(appRoot + '/')) {
+      res.status(403).json({ error: 'path outside app data directory' });
+      return;
+    }
+    if (!viewExists(resolved)) {
+      res.status(404).json({ error: `File not found: ${rawPath}` });
+      return;
+    }
+    try {
+      const lower = resolved.toLowerCase();
+      const contentType = lower.endsWith('.pdf')
+        ? 'application/pdf'
+        : lower.endsWith('.csv')
+          ? 'text/csv'
+          : 'application/octet-stream';
+      const bytes = await viewReadFile(resolved);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', 'inline');
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+      res.send(bytes);
+    } catch (err) {
+      res.status(500).json({
+        error: `Failed to read file: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  });
+
   router.post(
     '/api/supplier-statements/:statement_id/process',
     async (req: Request, res: Response) => {

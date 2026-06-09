@@ -68,6 +68,7 @@ function buildProxyCtx(opts) {
                 case 'logger': return stableServices.logger;
                 case 'email': return stableServices.email;
                 case 'llm': return stableServices.llm;
+                case 'aiCredentials': return stableServices.aiCredentials;
                 case 'emailIngest': return stableServices.emailIngest;
                 case 'graph': return stableServices.graph;
                 case 'createAIService': return stableServices.createAIService;
@@ -99,14 +100,14 @@ function buildProxyCtx(opts) {
  *
  * Usage from src/index.ts:
  *   export const register = createV2RegisterAdapter({
- *     appId: 'bank-reconcile',
+ *     appId: 'suppliers',
  *     createRouterV1: createRouter,
  *   });
  */
 export function createV2RegisterAdapter(opts) {
     /**
-     * Router cache. `null` until the first request triggers construction;
-     * thereafter holds the single Router shared by every request.
+     * Router cache. `null` until construction; thereafter holds the single
+     * Router shared by every request.
      *
      * Concurrency: createRouterV1 is synchronous and idempotent in the
      * v1 plugins, so a (very unlikely) race between two simultaneous
@@ -116,6 +117,17 @@ export function createV2RegisterAdapter(opts) {
      */
     let cachedRouter = null;
     return function register(deps) {
+        // SAM 1.6.4+: if the loader passes stable services at registration time,
+        // build the router immediately so email-folder subscriptions and other
+        // startup work (bootstrapFolders, etc.) fire without waiting for the
+        // first authenticated request.
+        if (deps.stableServices && cachedRouter === null) {
+            const proxyCtx = buildProxyCtx({
+                appId: opts.appId,
+                stableServices: deps.stableServices,
+            });
+            cachedRouter = opts.createRouterV1(proxyCtx);
+        }
         deps.app.use((req, res, next) => {
             // Resolve SAM's per-request handles.
             let ctx;
@@ -129,8 +141,8 @@ export function createV2RegisterAdapter(opts) {
                 // decide whether to 401 or serve admin-only paths).
                 return next(err);
             }
-            // First-request: build the inner router with the stable services
-            // baked into the Proxy.
+            // First-request fallback (SAM < 1.6.4 without stableServices):
+            // build the inner router with the stable services baked into the Proxy.
             if (cachedRouter === null) {
                 const proxyCtx = buildProxyCtx({
                     appId: opts.appId,

@@ -105,6 +105,31 @@ export interface SamEmailIngestService {
     }>;
     onOwnershipChange(fn: (event: unknown) => Promise<void>): () => void;
     onActivityChange(fn: (event: unknown) => Promise<void>): () => void;
+    claimFolder?(opts: {
+        mailboxEmail: string;
+        folderPath: string;
+    }): Promise<{
+        id: string;
+        folderPath: string;
+    }>;
+    releaseFolder?(opts: {
+        mailboxEmail: string;
+        folderPath: string;
+    }): Promise<void>;
+    listMyFolders?(): Promise<Array<{
+        id: string;
+        mailboxId: string;
+        mailboxEmail: string;
+        folderPath: string;
+        isActive: boolean;
+    }>>;
+    registerFolderHandler?(folderId: string, handler: (...args: unknown[]) => unknown): Promise<() => void>;
+    onFolderOwnershipChange?(fn: (event: unknown) => Promise<void>): () => void;
+    /** SAM Core 1.6.14+ — register filesystem drop-folder path for routed attachments */
+    setDropFolder?(opts: {
+        mailboxEmail: string;
+        dropFolderPath: string;
+    }): Promise<void>;
 }
 /**
  * Microsoft Graph helper injected by SAM. Used for direct Graph calls
@@ -137,6 +162,17 @@ export interface AppContext {
     createAIService?: () => unknown;
     email?: SamEmailService;
     llm?: SamLlmService;
+    /**
+     * Resolve the tenant's configured AI provider/model/key (SAM v2). Used to
+     * build a direct vision PDF extractor. Returns null when unconfigured.
+     * Added per bank-rec commit 44a2e005 — without this, vision/LLM
+     * extraction silently falls back to text-only with hallucinated values.
+     */
+    aiCredentials?: () => Promise<{
+        provider: 'gemini' | 'claude';
+        model: string;
+        apiKey: string;
+    } | null>;
     emailIngest?: SamEmailIngestService;
     graph?: SamGraphService;
     setSyncTrigger?: (handler: () => Promise<void>) => void;

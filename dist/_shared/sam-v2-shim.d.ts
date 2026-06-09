@@ -76,6 +76,7 @@ export interface SamServicesShape {
     logger: AppContext['logger'];
     email?: AppContext['email'];
     llm?: AppContext['llm'];
+    aiCredentials?: AppContext['aiCredentials'];
     emailIngest?: AppContext['emailIngest'];
     graph?: AppContext['graph'];
     createAIService?: AppContext['createAIService'];
@@ -93,7 +94,7 @@ interface AlsStore {
  *
  * Usage from src/index.ts:
  *   export const register = createV2RegisterAdapter({
- *     appId: 'bank-reconcile',
+ *     appId: 'suppliers',
  *     createRouterV1: createRouter,
  *   });
  */
@@ -104,6 +105,10 @@ export declare function createV2RegisterAdapter(opts: {
     app: Router;
     useSamContext: UseSamContextFn;
     useSamServices: UseSamServicesFn;
+    /** SAM 1.6.4+: stable services built at load time so the plugin can
+     *  eagerly bootstrap (e.g. email-folder subscriptions) without waiting
+     *  for the first authenticated request. */
+    stableServices?: SamServicesShape;
 }) => void;
 /**
  * Test-only export: lets unit tests reset the cached router between
